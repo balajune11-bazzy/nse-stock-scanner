@@ -122,76 +122,81 @@ def simulate_trades(ticker_list, period="1y"):
             })
     return pd.DataFrame(closed_trades), pd.DataFrame(open_trades)
 
-tab1, tab2, tab3 = st.tabs(["📡 Live Market Scanner", "🧪 1-Year Signal Tester", "📝 14-Day Forward Grader"])
-
-with tab1:
+def render_tab1():
     st.subheader("Live 1-Hour Market Signals")
-    if st.button("Click Here to Scan Live Market"):
-        with st.spinner("Scanning Nifty 50 1-hour charts..."):
-            rows = []
-            for ticker in tickers:
-                df = get_stock_data(ticker, period="1mo")
-                if df is None:
-                    continue
-                c_close, c_rsi = float(df["Close"].iloc[-1]), float(df["RSI"].iloc[-1])
-                c_trend, p_trend = bool(df["In_Uptrend"].iloc[-1]), bool(df["In_Uptrend"].iloc[-2])
-                if not p_trend and c_trend and c_rsi > rsi_threshold:
-                    sig, prio = "🟢 CONFIRMED BUY (Fresh Flip)", 1
-                elif c_trend and c_rsi >= 70:
-                    sig, prio = "💰 TAKE PROFIT (RSI Overbought)", 2
-                elif p_trend and not c_trend:
-                    sig, prio = "🔴 EXIT / SELL (Trend Flipped Red)", 3
-                elif c_trend:
-                    sig, prio = "🟡 ACTIVE UPTREND", 4
-                else:
-                    sig, prio = "⚪ WAIT (No Setup)", 5
-                rows.append({
-                    "Priority": prio, "Stock": ticker.replace(".NS", ""), "Price (₹)": round(c_close, 2),
-                    "RSI (14)": round(c_rsi, 1), "Signal": sig,
-                    "Target (₹)": round(c_close * (1 + target_pct), 2), "Stop Loss (₹)": round(c_close * (1 - stoploss_pct), 2)
-                })
-            if rows:
-                out_df = pd.DataFrame(rows).sort_values("Priority").drop(columns=["Priority"])
-                st.dataframe(out_df, use_container_width=True, hide_index=True)
-
-with tab2:
-    st.subheader("Automated 1-Year Signal Validation")
-    if st.button("Click Here to Run 1-Year Validation Test"):
-        with st.spinner("Testing 1 year of historical signals across Nifty 50 (takes ~25 seconds)..."):
-            trades_df, _ = simulate_trades(tickers, period="1y")
-            if trades_df.empty:
-                st.warning("No completed signals found.")
+    if not st.button("Click Here to Scan Live Market"):
+        return
+    with st.spinner("Scanning Nifty 50 1-hour charts..."):
+        rows = []
+        for ticker in tickers:
+            df = get_stock_data(ticker, period="1mo")
+            if df is None:
+                continue
+            c_close, c_rsi = float(df["Close"].iloc[-1]), float(df["RSI"].iloc[-1])
+            c_trend, p_trend = bool(df["In_Uptrend"].iloc[-1]), bool(df["In_Uptrend"].iloc[-2])
+            if not p_trend and c_trend and c_rsi > rsi_threshold:
+                sig, prio = "🟢 CONFIRMED BUY (Fresh Flip)", 1
+            elif c_trend and c_rsi >= 70:
+                sig, prio = "💰 TAKE PROFIT (RSI Overbought)", 2
+            elif p_trend and not c_trend:
+                sig, prio = "🔴 EXIT / SELL (Trend Flipped Red)", 3
+            elif c_trend:
+                sig, prio = "🟡 ACTIVE UPTREND", 4
             else:
-                total = len(trades_df)
-                wins = len(trades_df[trades_df["Net Return (%)"] > 0])
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Total Signals", total)
-                c2.metric("True Signals (Wins)", wins)
-                c3.metric("False Signals (Losses)", total - wins)
-                c4.metric("Accuracy (%)", f"{(wins / total) * 100:.1f}%")
+                sig, prio = "⚪ WAIT (No Setup)", 5
+            rows.append({
+                "Priority": prio, "Stock": ticker.replace(".NS", ""), "Price (₹)": round(c_close, 2),
+                "RSI (14)": round(c_rsi, 1), "Signal": sig,
+                "Target (₹)": round(c_close * (1 + target_pct), 2), "Stop Loss (₹)": round(c_close * (1 - stoploss_pct), 2)
+            })
+        if rows:
+            out_df = pd.DataFrame(rows).sort_values("Priority").drop(columns=["Priority"])
+            st.dataframe(out_df, use_container_width=True, hide_index=True)
 
-                summary = trades_df.groupby("Stock").agg(
-                    Signals=("Net Return (%)", "count"),
-                    Wins=("Net Return (%)", lambda x: (x > 0).sum()),
-                    Losses=("Net Return (%)", lambda x: (x <= 0).sum()),
-                    Accuracy_Pct=("Net Return (%)", lambda x: round((x > 0).mean() * 100, 1)),
-                    Total_Net_Return_Pct=("Net Return (%)", lambda x: round(x.sum(), 2))
-                ).sort_values("Accuracy_Pct", ascending=False).reset_index()
-                st.dataframe(summary, use_container_width=True, hide_index=True)
-                st.dataframe(trades_df, use_container_width=True, hide_index=True)
-                st.download_button("Download Audit CSV", trades_df.to_csv(index=False).encode("utf-8"), "audit_1y.csv", "text/csv")
+def render_tab2():
+    st.subheader("Automated 1-Year Signal Validation")
+    if not st.button("Click Here to Run 1-Year Validation Test"):
+        return
+    with st.spinner("Testing 1 year of historical signals across Nifty 50 (takes ~25 seconds)..."):
+        trades_df, _ = simulate_trades(tickers, period="1y")
+        if trades_df.empty:
+            st.warning("No completed signals found.")
+            return
+        total = len(trades_df)
+        wins = len(trades_df[trades_df["Net Return (%)"] > 0])
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Signals", total)
+        c2.metric("True Signals (Wins)", wins)
+        c3.metric("False Signals (Losses)", total - wins)
+        c4.metric("Accuracy (%)", f"{(wins / total) * 100:.1f}%")
 
-with tab3:
+        summary = trades_df.groupby("Stock").agg(
+            Signals=("Net Return (%)", "count"),
+            Wins=("Net Return (%)", lambda x: (x > 0).sum()),
+            Losses=("Net Return (%)", lambda x: (x <= 0).sum()),
+            Accuracy_Pct=("Net Return (%)", lambda x: round((x > 0).mean() * 100, 1)),
+            Total_Net_Return_Pct=("Net Return (%)", lambda x: round(x.sum(), 2))
+        ).sort_values("Accuracy_Pct", ascending=False).reset_index()
+        st.dataframe(summary, use_container_width=True, hide_index=True)
+        st.dataframe(trades_df, use_container_width=True, hide_index=True)
+        st.download_button("Download Audit CSV", trades_df.to_csv(index=False).encode("utf-8"), "audit_1y.csv", "text/csv")
+
+def render_tab3():
     st.subheader("Recent 14-Day Forward Signal Grader")
-    if st.button("Click Here to Grade Last 14 Days"):
-        with st.spinner("Checking last 14 days of signals..."):
-            closed_14, open_14 = simulate_trades(tickers, period="1mo")
-            cutoff = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
-if not closed_14.empty:
-                closed_14 = closed_14[closed_14["Entry Time"] >= cutoff]
-            if not open_14.empty:
-                open_14 = open_14[open_14["Entry Time"] >= cutoff]
-            st.write("**Active Signals (In Progress):**")
-            st.dataframe(open_14, use_container_width=True, hide_index=True)
-            st.write("**Completed Signals (Last 14 Days):**")
-            st.dataframe(closed_14, use_container_width=True, hide_index=True)
+    if not st.button("Click Here to Grade Last 14 Days"):
+        return
+    with st.spinner("Checking last 14 days of signals..."):
+        closed_14, open_14 = simulate_trades(tickers, period="1mo")
+        cutoff = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+        if not closed_14.empty:
+            closed_14 = closed_14[closed_14["Entry Time"] >= cutoff]
+        if not open_14.empty:
+            open_14 = open_14[open_14["Entry Time"] >= cutoff]
+        st.write("**Active Signals (In Progress):**")
+        st.dataframe(open_14, use_container_width=True, hide_index=True)
+st.write("Completed Signals (Last 14 Days):")
+st.dataframe(closed_14, use_container_width=True, hide_index=True)
+tab1, tab2, tab3 = st.tabs(["📡 Live Market Scanner", "🧪 1-Year Signal Tester", "📝 14-Day Forward Grader"])
+with tab1: render_tab1()
+with tab2: render_tab2()
+with tab3: render_tab3()
