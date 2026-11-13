@@ -1,241 +1,197 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 
-# Page Configuration
-st.set_page_config(
-    page_title="NSE Trend-Shift Scanner & Automated Signal Validator",
-    page_icon="⚡",
-    layout="wide"
-)
+st.set_page_config(page_title="NSE Trend-Shift Scanner", page_icon="⚡", layout="wide")
 
-# Header & Strategy Summary
 st.title("⚡ NSE Trend-Shift Scanner & Automated Signal Validator")
-st.markdown(
-    "**Single Strategy:** Enter on **SuperTrend (10,3) Green Flip + RSI Confirmation** (1-Hour Chart) | "
-    "**Quick Exit:** Take fixed profit target or exit immediately on stop-loss/trend flip."
-)
+st.write("Strategy: SuperTrend (10,3) Green Flip + RSI > 55 (1-Hour Chart) | Target: +2.5% | Stop-Loss: -1.5%")
 
-# Default Liquid Nifty Watchlist
-DEFAULT_TICKERS = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS", "AXISBANK.NS",
-    "M&M.NS", "SUNPHARMA.NS", "MARUTI.NS", "TITAN.NS", "BAJFINANCE.NS",
-    "NTPC.NS", "POWERGRID.NS", "HCLTECH.NS", "WIPRO.NS", "TATASTEEL.NS"
+NIFTY_50 = [
+    "ADANIENT.NS", "ADANIPORTS.NS", "APOLLOHOSP.NS", "ASIANPAINT.NS", "AXISBANK.NS",
+    "BAJAJ-AUTO.NS", "BAJFINANCE.NS", "BAJAJFINSV.NS", "BEL.NS", "BHARTIARTL.NS",
+    "BPCL.NS", "BRITANNIA.NS", "CIPLA.NS", "COALINDIA.NS", "DRREDDY.NS",
+    "EICHERMOT.NS", "GRASIM.NS", "HCLTECH.NS", "HDFCBANK.NS", "HDFCLIFE.NS",
+    "HEROMOTOCO.NS", "HINDALCO.NS", "HINDUNILVR.NS", "ICICIBANK.NS", "INDUSINDBK.NS",
+    "INFY.NS", "ITC.NS", "JSWSTEEL.NS", "KOTAKBANK.NS", "LT.NS",
+    "M&M.NS", "MARUTI.NS", "NESTLEIND.NS", "NTPC.NS", "ONGC.NS",
+    "POWERGRID.NS", "RELIANCE.NS", "SBILIFE.NS", "SBIN.NS", "SHRIRAMFIN.NS",
+    "SUNPHARMA.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "TCS.NS",
+    "TECHM.NS", "TITAN.NS", "TRENT.NS", "ULTRACEMCO.NS", "WIPRO.NS"
 ]
 
-# Sidebar Controls
 st.sidebar.header("⚙️ Strategy Settings")
-target_pct = st.sidebar.number_input("Profit Target (%)", min_value=0.5, max_value=15.0, value=2.5, step=0.5) / 100
-stoploss_pct = st.sidebar.number_input("Stop Loss (%)", min_value=0.5, max_value=10.0, value=1.5, step=0.5) / 100
-rsi_threshold = st.sidebar.slider("Minimum RSI for Entry", min_value=45, max_value=70, value=55)
-fee_pct = st.sidebar.number_input("Round-Trip Taxes & Fees (%)", min_value=0.0, max_value=1.0, value=0.15, step=0.05) / 100
+target_pct = st.sidebar.number_input("Profit Target (%)", 0.5, 15.0, 2.5, 0.5) / 100
+stoploss_pct = st.sidebar.number_input("Stop Loss (%)", 0.5, 10.0, 1.5, 0.5) / 100
+rsi_threshold = st.sidebar.slider("Minimum RSI for Entry", 45, 70, 55)
+fee_pct = st.sidebar.number_input("Round-Trip Taxes & Fees (%)", 0.0, 1.0, 0.15, 0.05) / 100
 
-st.sidebar.markdown("---")
-st.sidebar.info(
-    "**Risk Reminder:** No strategy is 100% foolproof. Always diversify across 5–10 stocks, "
-    "respect stop-losses, and paper trade before deploying real capital."
-)
-
-# Watchlist Input
-user_tickers = st.text_input(
-    "NSE Watchlist (comma-separated, ending with .NS):",
-    value=", ".join(DEFAULT_TICKERS)
-)
+user_tickers = st.text_input("NSE Watchlist (Full Nifty 50 loaded by default):", value=", ".join(NIFTY_50))
 tickers = [t.strip().upper() for t in user_tickers.split(",") if t.strip()]
 
-# --- TECHNICAL INDICATORS ---
-def calculate_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.where(delta > 0, 0.0).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0.0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
+def calc_indicators(df):
+    delta = df["Close"].diff()
+    gain = delta.where(delta > 0, 0.0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0.0)).rolling(14).mean()
+    df["RSI"] = 100 - (100 / (1 + (gain / loss)))
 
-def calculate_supertrend(df, period=10, multiplier=3.0):
-    high = df["High"]
-    low = df["Low"]
-    close = df["Close"]
-    
-    tr1 = high - low
-    tr2 = (high - close.shift(1)).abs()
-    tr3 = (low - close.shift(1)).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean()
-    
+    high, low, close = df["High"], df["Low"], df["Close"]
+    tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(10).mean()
     hl2 = (high + low) / 2
-    upperband = hl2 + (multiplier * atr)
-    lowerband = hl2 - (multiplier * atr)
-    
-    in_uptrend = [True] * len(df)
+    upper = hl2 + (3.0 * atr)
+    lower = hl2 - (3.0 * atr)
+
+    trend = [True] * len(df)
     for i in range(1, len(df)):
-        if close.iloc[i] > upperband.iloc[i - 1]:
-            in_uptrend[i] = True
-        elif close.iloc[i] < lowerband.iloc[i - 1]:
-            in_uptrend[i] = False
+        if close.iloc[i] > upper.iloc[i - 1]:
+            trend[i] = True
+        elif close.iloc[i] < lower.iloc[i - 1]:
+            trend[i] = False
         else:
-            in_uptrend[i] = in_uptrend[i - 1]
-            if in_uptrend[i] and lowerband.iloc[i] < lowerband.iloc[i - 1]:
-                lowerband.iloc[i] = lowerband.iloc[i - 1]
-            if not in_uptrend[i] and upperband.iloc[i] > upperband.iloc[i - 1]:
-                upperband.iloc[i] = upperband.iloc[i - 1]
-                
-    df["In_Uptrend"] = in_uptrend
-    return df
+            trend[i] = trend[i - 1]
+            if trend[i] and lower.iloc[i] < lower.iloc[i - 1]:
+                lower.iloc[i] = lower.iloc[i - 1]
+            if not trend[i] and upper.iloc[i] > upper.iloc[i - 1]:
+                upper.iloc[i] = upper.iloc[i - 1]
+    df["In_Uptrend"] = trend
+    return df.dropna()
 
 @st.cache_data(ttl=900)
-def fetch_data(ticker, period="1y"):
+def get_stock_data(ticker, period="1y"):
     try:
         df = yf.download(ticker, period=period, interval="1h", progress=False)
         if df.empty or len(df) < 40:
             return None
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-        df["RSI"] = calculate_rsi(df["Close"])
-        df = calculate_supertrend(df)
-        df.dropna(inplace=True)
-        return df
+        return calc_indicators(df)
     except Exception:
         return None
 
-# --- SIMULATION ENGINE ---
-def simulate_signals(ticker_list, period="1y"):
-    all_trades = []
-    open_trades = []
-    
+def simulate_trades(ticker_list, period="1y"):
+    closed_trades, open_trades = [], []
     for ticker in ticker_list:
-        df = fetch_data(ticker, period=period)
+        df = get_stock_data(ticker, period=period)
         if df is None:
             continue
-            
-        in_trade = False
-        entry_price = 0.0
-        entry_time = None
-        target_price = 0.0
-        stop_price = 0.0
-        
+        in_trade, entry_price, entry_time, target_p, stop_p = False, 0.0, None, 0.0, 0.0
         for i in range(1, len(df) - 1):
-            curr_row = df.iloc[i]
-            prev_row = df.iloc[i - 1]
-            next_row = df.iloc[i + 1]
-            
+            curr, prev, nxt = df.iloc[i], df.iloc[i - 1], df.iloc[i + 1]
             if not in_trade:
-                if (not prev_row["In_Uptrend"]) and curr_row["In_Uptrend"] and (curr_row["RSI"] > rsi_threshold):
+                if (not prev["In_Uptrend"]) and curr["In_Uptrend"] and (curr["RSI"] > rsi_threshold):
                     in_trade = True
-                    entry_price = float(next_row["Open"])
+                    entry_price = float(nxt["Open"])
                     entry_time = df.index[i + 1]
-                    target_price = entry_price * (1 + target_pct)
-                    stop_price = entry_price * (1 - stoploss_pct)
+                    target_p = entry_price * (1 + target_pct)
+                    stop_p = entry_price * (1 - stoploss_pct)
             else:
-                candle_high = float(curr_row["High"])
-                candle_low = float(curr_row["Low"])
-                candle_close = float(curr_row["Close"])
-                
-                if candle_low <= stop_price:
-                    net_ret = (-stoploss_pct - fee_pct) * 100
-                    all_trades.append({
-                        "Stock": ticker.replace(".NS", ""),
-                        "Entry Time": str(entry_time)[:16],
-                        "Exit Time": str(df.index[i])[:16],
-                        "Entry (₹)": round(entry_price, 2),
-                        "Exit (₹)": round(stop_price, 2),
-                        "Status": "❌ FALSE SIGNAL (Stop-Loss)",
-                        "Net Return (%)": round(net_ret, 2)
+                if float(curr["Low"]) <= stop_p:
+                    net = (-stoploss_pct - fee_pct) * 100
+                    closed_trades.append({
+                        "Stock": ticker.replace(".NS", ""), "Entry Time": str(entry_time)[:16],
+                        "Exit Time": str(df.index[i])[:16], "Entry (₹)": round(entry_price, 2),
+                        "Exit (₹)": round(stop_p, 2), "Status": "❌ FALSE (Stop-Loss)", "Net Return (%)": round(net, 2)
                     })
                     in_trade = False
-                elif candle_high >= target_price:
-                    net_ret = (target_pct - fee_pct) * 100
-                    all_trades.append({
-                        "Stock": ticker.replace(".NS", ""),
-                        "Entry Time": str(entry_time)[:16],
-                        "Exit Time": str(df.index[i])[:16],
-                        "Entry (₹)": round(entry_price, 2),
-                        "Exit (₹)": round(target_price, 2),
-                        "Status": "✅ TRUE SIGNAL (Target Hit)",
-                        "Net Return (%)": round(net_ret, 2)
+                elif float(curr["High"]) >= target_p:
+                    net = (target_pct - fee_pct) * 100
+                    closed_trades.append({
+                        "Stock": ticker.replace(".NS", ""), "Entry Time": str(entry_time)[:16],
+                        "Exit Time": str(df.index[i])[:16], "Entry (₹)": round(entry_price, 2),
+                        "Exit (₹)": round(target_p, 2), "Status": "✅ TRUE (Target Hit)", "Net Return (%)": round(net, 2)
                     })
                     in_trade = False
-                elif not curr_row["In_Uptrend"]:
-                    raw_ret = (candle_close - entry_price) / entry_price
-                    net_ret = (raw_ret - fee_pct) * 100
-                    label = "✅ TRUE SIGNAL (Trend Exit Profit)" if net_ret > 0 else "❌ FALSE SIGNAL (Trend Reversal)"
-                    all_trades.append({
-                        "Stock": ticker.replace(".NS", ""),
-                        "Entry Time": str(entry_time)[:16],
-                        "Exit Time": str(df.index[i])[:16],
-                        "Entry (₹)": round(entry_price, 2),
-                        "Exit (₹)": round(candle_close, 2),
-                        "Status": label,
-                        "Net Return (%)": round(net_ret, 2)
+                elif not curr["In_Uptrend"]:
+                    net = (((float(curr["Close"]) - entry_price) / entry_price) - fee_pct) * 100
+                    status = "✅ TRUE (Trend Profit)" if net > 0 else "❌ FALSE (Trend Reversal)"
+                    closed_trades.append({
+                        "Stock": ticker.replace(".NS", ""), "Entry Time": str(entry_time)[:16],
+                        "Exit Time": str(df.index[i])[:16], "Entry (₹)": round(entry_price, 2),
+                        "Exit (₹)": round(float(curr["Close"]), 2), "Status": status, "Net Return (%)": round(net, 2)
                     })
                     in_trade = False
-                    
-        # Record still-open trades for the live forward tracker
         if in_trade:
-            curr_price = float(df["Close"].iloc[-1])
-            unrealized = ((curr_price - entry_price) / entry_price - fee_pct) * 100
+            curr_p = float(df["Close"].iloc[-1])
+            unreal = (((curr_p - entry_price) / entry_price) - fee_pct) * 100
             open_trades.append({
-                "Stock": ticker.replace(".NS", ""),
-                "Entry Time": str(entry_time)[:16],
-                "Entry (₹)": round(entry_price, 2),
-                "Current (₹)": round(curr_price, 2),
-                "Target (₹)": round(target_price, 2),
-                "Stop Loss (₹)": round(stop_price, 2),
-                "Unrealized (%)": round(unrealized, 2)
+                "Stock": ticker.replace(".NS", ""), "Entry Time": str(entry_time)[:16],
+                "Entry (₹)": round(entry_price, 2), "Current (₹)": round(curr_p, 2),
+                "Target (₹)": round(target_p, 2), "Stop Loss (₹)": round(stop_p, 2), "Unrealized (%)": round(unreal, 2)
             })
-            
-    return pd.DataFrame(all_trades), pd.DataFrame(open_trades)
+    return pd.DataFrame(closed_trades), pd.DataFrame(open_trades)
 
-# --- TABS ---
-tab1, tab2, tab3 = st.tabs([
-    "📡 Live Market Scanner",
-    "🧪 Automated Signal Tester (1-Year)",
-    "📝 Recent 14-Day Forward Grader"
-])
+tab1, tab2, tab3 = st.tabs(["📡 Live Market Scanner", "🧪 1-Year Signal Tester", "📝 14-Day Forward Grader"])
 
-# TAB 1: LIVE SCANNER
 with tab1:
-    st.subheader("Current 1-Hour Market Signals")
-    if st.button("Scan Live Market Now", type="primary"):
-        with st.spinner("Scanning latest NSE 1-hour candles..."):
+    st.subheader("Live 1-Hour Market Signals")
+    if st.button("Click Here to Scan Live Market"):
+        with st.spinner("Scanning Nifty 50 1-hour charts..."):
             rows = []
             for ticker in tickers:
-                df = fetch_data(ticker, period="1mo")
+                df = get_stock_data(ticker, period="1mo")
                 if df is None:
                     continue
-                curr_close = float(df["Close"].iloc[-1])
-                curr_rsi = float(df["RSI"].iloc[-1])
-                curr_trend = bool(df["In_Uptrend"].iloc[-1])
-                prev_trend = bool(df["In_Uptrend"].iloc[-2])
-
-                if not prev_trend and curr_trend and curr_rsi > rsi_threshold:
-                    signal = "🟢 CONFIRMED BUY (Fresh Flip)"
-                    priority = 1
-                elif curr_trend and curr_rsi >= 70:
-                    signal = "💰 TAKE PROFIT (RSI Overbought)"
-                    priority = 2
-                elif prev_trend and not curr_trend:
-                    signal = "🔴 EXIT / SELL (Trend Flipped Red)"
-                    priority = 3
-                elif curr_trend:
-                    signal = "🟡 ACTIVE UPTREND"
-                    priority = 4
+                c_close, c_rsi = float(df["Close"].iloc[-1]), float(df["RSI"].iloc[-1])
+                c_trend, p_trend = bool(df["In_Uptrend"].iloc[-1]), bool(df["In_Uptrend"].iloc[-2])
+                if not p_trend and c_trend and c_rsi > rsi_threshold:
+                    sig, prio = "🟢 CONFIRMED BUY (Fresh Flip)", 1
+                elif c_trend and c_rsi >= 70:
+                    sig, prio = "💰 TAKE PROFIT (RSI Overbought)", 2
+                elif p_trend and not c_trend:
+                    sig, prio = "🔴 EXIT / SELL (Trend Flipped Red)", 3
+                elif c_trend:
+                    sig, prio = "🟡 ACTIVE UPTREND", 4
                 else:
-                    signal = "⚪ WAIT (No Setup)"
-                    priority = 5
-
+                    sig, prio = "⚪ WAIT (No Setup)", 5
                 rows.append({
-                    "Priority": priority,
-                    "Stock": ticker.replace(".NS", ""),
-                    "Last Price (₹)": round(curr_close, 2),
-                    "RSI (14)": round(curr_rsi, 1),
-                    "Action Signal": signal,
-                    f"Target (+{target_pct*100:.1f}%)": round(curr_close * (1 + target_pct), 2),
-                    f"Stop Loss (-{stoploss_pct*100:.1f}%)": round(curr_close * (1 - stoploss_pct), 2)
+                    "Priority": prio, "Stock": ticker.replace(".NS", ""), "Price (₹)": round(c_close, 2),
+                    "RSI (14)": round(c_rsi, 1), "Signal": sig,
+                    "Target (₹)": round(c_close * (1 + target_pct), 2), "Stop Loss (₹)": round(c_close * (1 - stoploss_pct), 2)
                 })
-                
             if rows:
-                scan_df = pd.DataFrame(rows).sort_values("Priority").drop(columns=["Priority"])
-                st.dataframe(scan_df, use_container_width=True, hide_index=True)
+                out_df = pd.DataFrame(rows).sort_values("Priority").drop(columns=["Priority"])
+                st.dataframe(out_df, use_container_width=True, hide_index=True)
+
+with tab2:
+    st.subheader("Automated 1-Year Signal Validation")
+    if st.button("Click Here to Run 1-Year Validation Test"):
+        with st.spinner("Testing 1 year of historical signals across Nifty 50 (takes ~25 seconds)..."):
+            trades_df, _ = simulate_trades(tickers, period="1y")
+            if trades_df.empty:
+                st.warning("No completed signals found.")
+            else:
+                total = len(trades_df)
+                wins = len(trades_df[trades_df["Net Return (%)"] > 0])
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Total Signals", total)
+                c2.metric("True Signals (Wins)", wins)
+                c3.metric("False Signals (Losses)", total - wins)
+                c4.metric("Accuracy (%)", f"{(wins / total) * 100:.1f}%")
+
+                summary = trades_df.groupby("Stock").agg(
+                    Signals=("Net Return (%)", "count"),
+                    Wins=("Net Return (%)", lambda x: (x > 0).sum()),
+                    Losses=("Net Return (%)", lambda x: (x <= 0).sum()),
+                    Accuracy_Pct=("Net Return (%)", lambda x: round((x > 0).mean() * 100, 1)),
+                    Total_Net_Return_Pct=("Net Return (%)", lambda x: round(x.sum(), 2))
+                ).sort_values("Accuracy_Pct", ascending=False).reset_index()
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+                st.dataframe(trades_df, use_container_width=True, hide_index=True)
+                st.download_button("Download Audit CSV", trades_df.to_csv(index=False).encode("utf-8"), "audit_1y.csv", "text/csv")
+
+with tab3:
+    st.subheader("Recent 14-Day Forward Signal Grader")
+    if st.button("Click Here to Grade Last 14 Days"):
+        with st.spinner("Checking last 14 days of signals..."):
+            closed_14, open_14 = simulate_trades(tickers, period="1mo")
+            cutoff = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+if not closed_14.empty:
+                closed_14 = closed_14[closed_14["Entry Time"] >= cutoff]
+            if not open_14.empty:
+                open_14 = open_14[open_14["Entry Time"] >= cutoff]
+            st.write("**Active Signals (In Progress):**")
+            st.dataframe(open_14, use_container_width=True, hide_index=True)
+            st.write("**Completed Signals (Last 14 Days):**")
+            st.dataframe(closed_14, use_container_width=True, hide_index=True)
