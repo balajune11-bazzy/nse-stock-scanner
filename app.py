@@ -194,9 +194,13 @@ def render_tab3():
             open_14 = open_14[open_14["Entry Time"] >= cutoff]
         st.write("**Active Signals (In Progress):**")
         st.dataframe(open_14, use_container_width=True, hide_index=True)
-st.write("Completed Signals (Last 14 Days):")
-st.dataframe(closed_14, use_container_width=True, hide_index=True)
+        st.write("**Completed Signals (Last 14 Days):**")
+        st.dataframe(closed_14, use_container_width=True, hide_index=True)
+
 tab1, tab2, tab3 = st.tabs(["📡 Live Market Scanner", "🧪 1-Year Signal Tester", "📝 14-Day Forward Grader"])
-with tab1: render_tab1()
-with tab2: render_tab2()
-with tab3: render_tab3()
+with tab1:
+    render_tab1()
+with tab2:
+    render_tab2()
+with tab3:
+    render_tab3()
